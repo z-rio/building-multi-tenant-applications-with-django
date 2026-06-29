@@ -1,16 +1,11 @@
 from django.urls import path
 
 from .apiviews import PollViewSet, ChoiceList, CreateVote, UserCreate, LoginView
-
-
 from rest_framework.routers import DefaultRouter
 
-from rest_framework.documentation import include_docs_urls
-
-
 router = DefaultRouter()
-router.register("polls", PollViewSet, base_name="polls")
 
+router.register("polls", PollViewSet, basename="polls")
 
 urlpatterns = [
     path("login/", LoginView.as_view(), name="login"),

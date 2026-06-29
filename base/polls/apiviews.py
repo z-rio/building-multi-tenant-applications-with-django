@@ -4,7 +4,7 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework import viewsets
 from rest_framework.exceptions import PermissionDenied
-
+from tenants.utils import tenant_from_request
 from django.contrib.auth import authenticate
 
 from .models import Poll, Choice
@@ -19,6 +19,11 @@ from .serializers import (
 class PollViewSet(viewsets.ModelViewSet):
     queryset = Poll.objects.all()
     serializer_class = PollSerializer
+
+    def get_queryset(self):
+        tenant = tenant_from_request(self.request)
+        return super().get_queryset().filter(tenant=tenant)
+
 
     def destroy(self, request, *args, **kwargs):
         poll = Poll.objects.get(pk=self.kwargs["pk"])
