@@ -1,60 +1,76 @@
 from django.core.management.base import BaseCommand
 from django.contrib.auth.models import User
+from django.db import connection
 from tenants.models import Tenant
 from polls.models import Poll, Choice
 from faker import Faker
 import random
 
 class Command(BaseCommand):
-    help = "Seeds the database with test tenants and poll data."
+    help = "Seeds the database with master tenant routing entries and isolated poll data."
 
     def handle(self, *args, **kwargs):
         fake = Faker()
 
-        self.stdout.write("Clearing old data...")
-        Choice.objects.all().delete()
-        Poll.objects.all().delete()
+        self.stdout.write("Clearing global router data...")
+        with connection.cursor() as cursor:
+            cursor.execute("SET search_path TO public;")
         Tenant.objects.all().delete()
-        
-        # Ensure we have at least one superuser/user to assign as creator
-        user, _ = User.objects.get_or_create(
-            username="admin", 
-            defaults={"is_staff": True, "is_superuser": True}
-        )
-        user.set_password("admin123")
-        user.save()
 
-        self.stdout.write("Creating Tenants...")
-        # We will explicitly create prefixes matching your /etc/hosts setup!
-        tenant_prefixes = ["tenant1", "tenant2"]
-        tenants = []
+        self.stdout.write("Creating Tenant Router Records in public schema...")
+        tenant_configs = [
+            {"prefix": "tenant1", "schema": "tenant_safari", "name": "Safari Corp"},
+            {"prefix": "tenant2", "schema": "tenant_airtel", "name": "Airtel Corp"},
+        ]
         
-        for prefix in tenant_prefixes:
+        for config in tenant_configs:
+            # --- FORCE PUBLIC RESET ---
+            # Ensure the connection is always in public before trying to touch the router table!
+            with connection.cursor() as cursor:
+                cursor.execute("SET search_path TO public;")
+
             tenant = Tenant.objects.create(
-                name=f"{prefix.capitalize()} Corp",
-                subdomain_prefix=prefix
+                name=config["name"],
+                subdomain_prefix=config["prefix"],
+                schema_name=config["schema"]
             )
-            tenants.append(tenant)
-            self.stdout.write(f"  -> Created Tenant: {tenant.name} ({prefix}.testapp.local)")
+            self.stdout.write(f"  -> Created Routing Entity: {tenant.name} -> Schema: {tenant.schema_name}")
 
-        self.stdout.write("Populating Polls and Choices...")
-        for tenant in tenants:
-            # Create 3 unique polls per tenant
+            # --- SWITCH CONTEXT FOR ISOLATED DATA ---
+            self.stdout.write(f"  Populating isolated data for {tenant.name}...")
+            with connection.cursor() as cursor:
+                cursor.execute(f"SET search_path TO {config['schema']};")
+
+            # Wipe old schema data inside this isolated workspace room
+            Choice.objects.all().delete()
+            Poll.objects.all().delete()
+            User.objects.all().delete()
+
+            # Create an isolated tenant user inside THIS specific schema table
+            tenant_user = User.objects.create_user(
+                username="admin",
+                password="admin123",
+                is_staff=True,
+                is_superuser=True
+            )
+
+            # Create 3 unique polls linked to the user inside this exact same schema folder
             for _ in range(3):
                 poll = Poll.objects.create(
-                    tenant=tenant,
                     question=fake.sentence(nb_words=6).replace(".", "?"),
-                    created_by=user
+                    created_by=tenant_user
                 )
                 
-                # Create 3 to 5 choices for this specific poll
                 for _ in range(random.randint(3, 5)):
                     Choice.objects.create(
-                        tenant=tenant, # Keeps data aligned under the same tenant
                         poll=poll,
                         choice_text=fake.word().capitalize()
                     )
                     
-            self.stdout.write(f"  Successfully seeded data for {tenant.name}!")
+            self.stdout.write(f"  Successfully seeded isolated tables for {tenant.name}!")
 
-        self.stdout.write(self.style.SUCCESS("Database seeding complete!"))
+        # Reset session back to public
+        with connection.cursor() as cursor:
+            cursor.execute("SET search_path TO public;")
+
+        self.stdout.write(self.style.SUCCESS("Database schema seeding complete!"))
